@@ -6,7 +6,7 @@ buildscript {
         jcenter()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.3.1'
+        classpath 'com.android.tools.build:gradle:8.5.0'
     }
 }
 rootProject.allprojects {
@@ -20,7 +20,7 @@ android {
      namespace  "sk.fourq.calllog"
     compileSdkVersion 34
     defaultConfig {
-        minSdkVersion 16
+        minSdkVersion 26
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
     lintOptions {
@@ -28,7 +28,7 @@ android {
     }
 }
 dependencies {
-    implementation 'androidx.annotation:annotation:1.1.0'
-    implementation 'androidx.core:core:1.1.0'
-    implementation 'org.apache.commons:commons-lang3:3.6'
+    implementation 'androidx.annotation:annotation:1.9.0'
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'org.apache.commons:commons-lang3:3.15.0'
 }

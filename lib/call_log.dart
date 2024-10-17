@@ -98,6 +98,7 @@ class CallLogEntry {
     this.cachedNumberLabel,
     this.simDisplayName,
     this.phoneAccountId,
+    this.simSlotIndex, // 添加了 simSlotIndex 字段
   });
 
   /// constructor creating object from provided map
@@ -113,6 +114,7 @@ class CallLogEntry {
     cachedMatchedNumber = m['cachedMatchedNumber'];
     simDisplayName = m['simDisplayName'];
     phoneAccountId = m['phoneAccountId'];
+    simSlotIndex = m['simSlotIndex']; // 从 map 中获取 simSlotIndex
   }
 
   /// contact name
@@ -147,6 +149,9 @@ class CallLogEntry {
 
   /// PHONE account id
   String? phoneAccountId;
+
+  /// SIM slot index
+  String? simSlotIndex; 
 }
 
 /// All possible call types

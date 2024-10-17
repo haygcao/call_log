@@ -3,13 +3,15 @@ description: Demonstrates how to use the call_log plugin.
 version: 1.0.0+1
 
 environment:
-  sdk: ">=2.0.0-dev.68.0 <3.0.0"
+  sdk: ">=3.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^0.1.2
+  cupertino_icons: ^1.0.8
   workmanager: ^0.5.0
+  permission_handler: ^11.3.1
+  sim_card_info: ^1.0.2
 
 dev_dependencies:
   flutter_test:

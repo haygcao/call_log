@@ -1,6 +1,7 @@
 package sk.fourq.calllog;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.Context;
@@ -8,12 +9,18 @@ import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.os.Build;
 import android.provider.CallLog;
+import android.telecom.PhoneAccount;
+import android.telecom.PhoneAccountHandle;
+import android.telecom.TelecomManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyManager;
 import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
@@ -23,6 +30,7 @@ import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
 import io.flutter.plugin.common.PluginRegistry;
+
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
@@ -153,7 +161,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
         }
     }
 
-    /**
+    /***
      * Handler for flutter {@link MethodCall}
      */
     private void handleMethodCall() {
@@ -199,12 +207,15 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
      *
      * @param query String with sql search condition
      */
+    @SuppressLint({"Range", "HardwareIds"})
     private void queryLogs(String query) {
         SubscriptionManager subscriptionManager = ContextCompat.getSystemService(ctx, SubscriptionManager.class);
+        TelephonyManager telephonyManager = ContextCompat.getSystemService(ctx, TelephonyManager.class); // Added for carrierName
         List<SubscriptionInfo> subscriptions = null;
         if (subscriptionManager != null) {
             subscriptions = subscriptionManager.getActiveSubscriptionInfoList();
         }
+
         try (Cursor cursor = ctx.getContentResolver().query(
                 CallLog.Calls.CONTENT_URI,
                 CURSOR_PROJECTION,
@@ -224,8 +235,19 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
                 map.put("cachedNumberType", cursor.getInt(6));
                 map.put("cachedNumberLabel", cursor.getString(7));
                 map.put("cachedMatchedNumber", cursor.getString(8));
-                map.put("simDisplayName", getSimDisplayName(subscriptions, cursor.getString(9)));
-                map.put("phoneAccountId", cursor.getString(9));
+
+                String accountId = cursor.getString(9); // Assuming phoneAccountId is at index 9 
+
+                // 获取 SIM 卡槽索引，并加 1
+                String simSlotIndex = getSimSlotIndexFromAccountId(ctx, accountId);
+                int adjustedSimSlotIndex = Integer.parseInt(simSlotIndex) + 1; 
+
+                // 获取 SIM 卡 display name
+                String simDisplayName = getSimDisplayName(subscriptions, accountId, telephonyManager);
+
+                map.put("simDisplayName", simDisplayName); 
+                map.put("simSlotIndex", String.valueOf(adjustedSimSlotIndex)); // 使用调整后的索引
+                map.put("phoneAccountId", accountId); 
                 entries.add(map);
             }
             result.success(entries);
@@ -236,24 +258,43 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
         }
     }
 
-    /**
-     * Helper method that tries to obtian sim display name from accountId
-     *
-     * @param subscriptions Subscriptions - should represent sim cards
-     * @param accountId     Id of account to search for
-     * @return Name of the used sim card, null otherwise
-     */
-    private String getSimDisplayName(List<SubscriptionInfo> subscriptions, String accountId) {
-        if (accountId != null && subscriptions != null) {
-            for (SubscriptionInfo info : subscriptions) {
-                if (Integer.toString(info.getSubscriptionId()).equals(accountId) ||
-                        accountId.contains(info.getIccId())) {
-                    return String.valueOf(info.getDisplayName());
+    // 改进后的 getSimDisplayName 方法，参考你提供的代码片段
+    private String getSimDisplayName(List<SubscriptionInfo> subscriptions, String accountId, TelephonyManager telephonyManager) {
+        if (subscriptions != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                for (SubscriptionInfo info : subscriptions) {
+                    if (Integer.toString(info.getSubscriptionId()).equals(accountId)) {
+                        return info.getDisplayName().toString();
+                    }
                 }
+            } else {
+                // For older APIs, use TelephonyManager or other methods 
+                // to get SIM display name based on accountId
+                // ... (你可以根据需要添加针对旧版本 API 的逻辑)
+                return telephonyManager.getSimOperatorName(); // Example for older APIs
             }
         }
-        return null;
+        return "Unknown"; // 或其他默认值
     }
+
+    // getSimSlotIndexFromAccountId 方法保持不变
+    public static String getSimSlotIndexFromAccountId(Context context, String accountIdToFind) {
+        TelecomManager telecomManager = (TelecomManager) context.getSystemService(Context.TELECOM_SERVICE);
+        for (int index = 0; index < telecomManager.getCallCapablePhoneAccounts().size(); index++) {
+            PhoneAccountHandle account = telecomManager.getCallCapablePhoneAccounts().get(index);
+            PhoneAccount phoneAccount = telecomManager.getPhoneAccount(account);
+            String accountId = phoneAccount.getAccountHandle().getId();
+            if (accountIdToFind.equals(accountId)) {
+                return String.valueOf(index);
+            }
+        }
+        Integer parsedAccountId = Integer.parseInt(accountIdToFind);
+        if (parsedAccountId != null && parsedAccountId >= 0) {
+            return String.valueOf(parsedAccountId);
+        }
+        return "-1";
+    }
+
 
     /**
      * Helper method to check if permissions were granted
