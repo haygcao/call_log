@@ -1,4 +1,5 @@
 # call_log
+now it has been updated to support dual sim and  get realy display name and simslot, I will try to use the new template to rewrite it later.
 
 [![pub package](https://img.shields.io/pub/v/call_log.svg)](https://pub.dartlang.org/packages/call_log)
 
