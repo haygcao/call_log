@@ -5,9 +5,11 @@ import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.os.Build;
+import android.os.Handler;
 import android.provider.CallLog;
 import android.telecom.PhoneAccount;
 import android.telecom.PhoneAccountHandle;
@@ -69,18 +71,27 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
     private ActivityPluginBinding activityPluginBinding;
     private Activity activity;
     private Context ctx;
+    private MethodChannel channel; // 用于与 Flutter 通信的 MethodChannel
+    private long lastSyncTimestamp = 0; // 上次同步时间戳
 
     private void init(BinaryMessenger binaryMessenger, Context applicationContext) {
         Log.d(TAG, "init. Messanger:" + binaryMessenger + " Context:" + applicationContext);
-        final MethodChannel channel = new MethodChannel(binaryMessenger, "sk.fourq.call_log");
+        channel = new MethodChannel(binaryMessenger, "sk.fourq.call_log");
         channel.setMethodCallHandler(this);
         ctx = applicationContext;
+
+        // 获取上次同步时间戳
+        SharedPreferences prefs = ctx.getSharedPreferences("call_log_sync", Context.MODE_PRIVATE);
+        lastSyncTimestamp = prefs.getLong("last_sync_timestamp", 0);
     }
 
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
         Log.d(TAG, "onAttachedToEngine");
         init(flutterPluginBinding.getBinaryMessenger(), flutterPluginBinding.getApplicationContext());
+
+        // 注册 ContentObserver 监听通话记录的变化
+        ctx.getContentResolver().registerContentObserver(CallLog.Calls.CONTENT_URI, true, new CallLogObserver(new Handler(), ctx));
     }
 
     @Override
@@ -236,18 +247,18 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
                 map.put("cachedNumberLabel", cursor.getString(7));
                 map.put("cachedMatchedNumber", cursor.getString(8));
 
-                String accountId = cursor.getString(9); // Assuming phoneAccountId is at index 9 
+                String accountId = cursor.getString(9); // Assuming phoneAccountId is at index 9
 
                 // 获取 SIM 卡槽索引，并加 1
                 String simSlotIndex = getSimSlotIndexFromAccountId(ctx, accountId);
-                int adjustedSimSlotIndex = Integer.parseInt(simSlotIndex) + 1; 
+                int adjustedSimSlotIndex = Integer.parseInt(simSlotIndex) + 1;
 
                 // 获取 SIM 卡 display name
                 String simDisplayName = getSimDisplayName(subscriptions, accountId, telephonyManager);
 
-                map.put("simDisplayName", simDisplayName); 
+                map.put("simDisplayName", simDisplayName);
                 map.put("simSlotIndex", String.valueOf(adjustedSimSlotIndex)); // 使用调整后的索引
-                map.put("phoneAccountId", accountId); 
+                map.put("phoneAccountId", accountId);
                 entries.add(map);
             }
             result.success(entries);
@@ -268,7 +279,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
                     }
                 }
             } else {
-                // For older APIs, use TelephonyManager or other methods 
+                // For older APIs, use TelephonyManager or other methods
                 // to get SIM display name based on accountId
                 // ... (你可以根据需要添加针对旧版本 API 的逻辑)
                 return telephonyManager.getSimOperatorName(); // Example for older APIs
@@ -295,6 +306,88 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
         return "-1";
     }
 
+    // ContentObserver 监听通话记录的变化
+    private class CallLogObserver extends ContentObserver {
+        private Context context;
+
+        public CallLogObserver(Handler handler, Context context) {
+            super(handler);
+            this.context = context;
+        }
+
+        @Override
+        public void onChange(boolean selfChange) {
+            super.onChange(selfChange);
+
+            // 查询新增的通话记录
+            List<HashMap<String, Object>> newEntries = queryNewCallLogs(lastSyncTimestamp);
+
+            // 将新增的通话记录发送给 Flutter 端
+            if (!newEntries.isEmpty()) {
+                channel.invokeMethod("newCallLogs", newEntries);
+            }
+
+            // 更新上次同步时间戳
+            lastSyncTimestamp = System.currentTimeMillis();
+            SharedPreferences prefs = ctx.getSharedPreferences("call_log_sync", Context.MODE_PRIVATE);
+            prefs.edit().putLong("last_sync_timestamp", lastSyncTimestamp).apply();
+        }
+    }
+
+    // 查询新增的通话记录
+    @SuppressLint({"Range", "HardwareIds"})
+    private List<HashMap<String, Object>> queryNewCallLogs(long lastTimestamp) {
+        List<HashMap<String, Object>> newEntries = new ArrayList<>();
+
+        SubscriptionManager subscriptionManager = ContextCompat.getSystemService(ctx, SubscriptionManager.class);
+        TelephonyManager telephonyManager = ContextCompat.getSystemService(ctx, TelephonyManager.class);
+        List<SubscriptionInfo> subscriptions = null;
+        if (subscriptionManager != null) {
+            subscriptions = subscriptionManager.getActiveSubscriptionInfoList();
+        }
+
+        String selection = CallLog.Calls.DATE + " > ?";
+        String[] selectionArgs = new String[]{String.valueOf(lastTimestamp)};
+
+        try (Cursor cursor = ctx.getContentResolver().query(
+                CallLog.Calls.CONTENT_URI,
+                CURSOR_PROJECTION,
+                selection,
+                selectionArgs,
+                CallLog.Calls.DATE + " ASC"
+        )) {
+            while (cursor != null && cursor.moveToNext()) {
+                HashMap<String, Object> map = new HashMap<>();
+                map.put("formattedNumber", cursor.getString(0));
+                map.put("number", cursor.getString(1));
+                map.put("callType", cursor.getInt(2));
+                map.put("timestamp", cursor.getLong(3));
+                map.put("duration", cursor.getInt(4));
+                map.put("name", cursor.getString(5));
+                map.put("cachedNumberType", cursor.getInt(6));
+                map.put("cachedNumberLabel", cursor.getString(7));
+                map.put("cachedMatchedNumber", cursor.getString(8));
+
+                String accountId = cursor.getString(9); // Assuming phoneAccountId is at index 9
+
+                // 获取 SIM 卡槽索引，并加 1
+                String simSlotIndex = getSimSlotIndexFromAccountId(ctx, accountId);
+                int adjustedSimSlotIndex = Integer.parseInt(simSlotIndex) + 1;
+
+                // 获取 SIM 卡 display name
+                String simDisplayName = getSimDisplayName(subscriptions, accountId, telephonyManager);
+
+                map.put("simDisplayName", simDisplayName);
+                map.put("simSlotIndex", String.valueOf(adjustedSimSlotIndex)); // 使用调整后的索引
+                map.put("phoneAccountId", accountId);
+                newEntries.add(map);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error querying call logs: " + e.getMessage());
+        }
+
+        return newEntries;
+    }
 
     /**
      * Helper method to check if permissions were granted

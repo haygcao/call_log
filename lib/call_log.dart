@@ -4,13 +4,16 @@ import 'package:flutter/services.dart';
 
 /// main call_log plugin class
 class CallLog {
-  static const Iterable<CallLogEntry> _EMPTY_RESULT = Iterable<CallLogEntry>.empty();
+  static const Iterable<CallLogEntry> _EMPTY_RESULT =
+      Iterable<CallLogEntry>.empty();
   static const MethodChannel _channel = MethodChannel('sk.fourq.call_log');
 
   /// Get all call history log entries. Permissions are handled automatically
   static Future<Iterable<CallLogEntry>> get() async {
-    final Iterable<dynamic>? result = await _channel.invokeMethod('get', null);
-    return result?.map((dynamic m) => CallLogEntry.fromMap(m)) ?? _EMPTY_RESULT;
+    final Iterable<dynamic>? result =
+        await _channel.invokeMethod('get', null);
+    return result?.map((dynamic m) => CallLogEntry.fromMap(m)) ??
+        _EMPTY_RESULT;
   }
 
   /// Query call history log entries
@@ -40,8 +43,10 @@ class CallLog {
     String? cachedMatchedNumber,
     String? phoneAccountId,
   }) async {
-    assert(!(dateFrom != null && dateTimeFrom != null), 'use only one of dateTimeFrom/dateFrom');
-    assert(!(dateTo != null && dateTimeTo != null), 'use only one of dateTimeTo/dateTo');
+    assert(!(dateFrom != null && dateTimeFrom != null),
+        'use only one of dateTimeFrom/dateFrom');
+    assert(!(dateTo != null && dateTimeTo != null),
+        'use only one of dateTimeTo/dateTo');
 
     //NOTE: Since we are accepting date params both as timestamps and DateTime objects
     // we need to determine which one to use
@@ -58,14 +63,24 @@ class CallLog {
       'durationTo': durationTo?.toString(),
       'name': name,
       'number': number,
-      'type': type?.index == null ? null : (type!.index + 1).toString(),
+      'type':
+          type?.index == null ? null : (type!.index + 1).toString(),
       'cachedNumberType': cachedNumberType,
       'cachedNumberLabel': cachedNumberLabel,
       'cachedMatchedNumber': cachedMatchedNumber,
       'phoneAccountId': phoneAccountId,
     };
-    final Iterable<dynamic>? records = await _channel.invokeMethod('query', params);
-    return records?.map((dynamic m) => CallLogEntry.fromMap(m)) ?? _EMPTY_RESULT;
+    final Iterable<dynamic>? records =
+        await _channel.invokeMethod('query', params);
+    return records?.map((dynamic m) => CallLogEntry.fromMap(m)) ??
+        _EMPTY_RESULT;
+  }
+
+  /// 监听新通话记录事件
+  static Stream<CallLogEntry> listenNewCallLogs() {
+    return EventChannel('sk.fourq.call_log/new_call_logs')
+        .receiveBroadcastStream()
+        .map((dynamic event) => CallLogEntry.fromMap(event));
   }
 }
 
@@ -151,7 +166,7 @@ class CallLogEntry {
   String? phoneAccountId;
 
   /// SIM slot index
-  String? simSlotIndex; 
+  String? simSlotIndex;
 }
 
 /// All possible call types

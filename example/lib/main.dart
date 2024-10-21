@@ -59,8 +59,8 @@ class _MyAppState extends State<MyApp> {
 
   Future<void> _getSimInfo() async {
     final SimCardInfo simCardInfoPlugin = SimCardInfo();
-    List<flutter.SimInfo> simInfoList =
-        await simCardInfoPlugin.getSimInfo() ?? [];
+    final List<flutter.SimInfo> simInfoList =
+        await simCardInfoPlugin.getSimInfo() ?? <flutter.SimInfo>[];
     setState(() {
       _simInfoList = simInfoList;
     });
@@ -74,7 +74,7 @@ class _MyAppState extends State<MyApp> {
     // 显示所有 SIM 卡信息
     final List<Widget> simInfoWidgets = _simInfoList
         .map((flutter.SimInfo simInfo) => Text(
-            'SIM ${simInfo.slotIndex}: ${simInfo.displayName}',
+            'SIM ${simInfo.slotIndex}: ${simInfo.displayName}: ${simInfo.countryIso}',
             style: mono))
         .toList();
 
