@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:call_log/call_log.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // 添加 SharedPreferences
 import 'package:sim_card_info/sim_card_info.dart';
 import 'package:sim_card_info/sim_info.dart' as flutter;
 import 'package:workmanager/workmanager.dart';
@@ -48,14 +51,58 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  Iterable<CallLogEntry> _callLogEntries = <CallLogEntry>[];
+ List<CallLogEntry> _callLogEntries = <CallLogEntry>[]; // 将 Iterable 改为 List
   List<flutter.SimInfo> _simInfoList = <flutter.SimInfo>[];
+
+  // 用于监听新通话记录的订阅
+  StreamSubscription<dynamic>? _newCallLogsSubscription;
 
   @override
   void initState() {
     super.initState();
     _getSimInfo(); // 初始化时获取 SIM 卡信息
+
+    // 监听新通话记录
+    _listenForNewCallLogs();
+
+    // 首次加载通话记录
+    _loadInitialCallLogs();
   }
+
+  // 监听新通话记录
+  void _listenForNewCallLogs() {
+    _newCallLogsSubscription = CallLog.listenNewCallLogs().listen((CallLogEntry newCallLog) {
+      // 处理新的通话记录，例如添加到 _callLogEntries 列表中，并更新 UI
+      setState(() {
+        _callLogEntries.add(newCallLog);
+      });
+    });
+  }
+
+  // 首次加载通话记录
+  Future<void> _loadInitialCallLogs() async {
+    final lastSyncTimestamp = await _getLastSyncTimestamp();
+    final initialCallLogs = await CallLog.query(dateTimeFrom: DateTime.fromMillisecondsSinceEpoch(lastSyncTimestamp));
+    setState(() {
+      _callLogEntries = initialCallLogs.toList(); // 将 Iterable 转换为 List
+    });
+
+    // 首次加载后，将上次同步时间戳更新为当前时间
+    await _saveLastSyncTimestamp(DateTime.now().millisecondsSinceEpoch);
+  }
+
+  // 获取上次同步时间戳
+  Future<int> _getLastSyncTimestamp() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt('last_sync_timestamp') ?? 0;
+  }
+
+  // 保存上次同步时间戳
+  Future<void> _saveLastSyncTimestamp(int timestamp) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('last_sync_timestamp', timestamp);
+  }
+
 
   Future<void> _getSimInfo() async {
     final SimCardInfo simCardInfoPlugin = SimCardInfo();
@@ -118,11 +165,7 @@ class _MyAppState extends State<MyApp> {
 
                       if (status.isGranted) {
                         // 权限已授予，继续获取通话记录
-                        final Iterable<CallLogEntry> result =
-                            await CallLog.query();
-                        setState(() {
-                          _callLogEntries = result;
-                        });
+                        await _loadInitialCallLogs();
                       } else {
                         // 权限被拒绝，处理错误
                         // 例如，显示一个对话框提示用户授予权限
@@ -156,5 +199,12 @@ class _MyAppState extends State<MyApp> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    // 取消订阅
+    _newCallLogsSubscription?.cancel();
+    super.dispose();
   }
 }
