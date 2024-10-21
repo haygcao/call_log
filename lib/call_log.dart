@@ -4,16 +4,16 @@ import 'package:flutter/services.dart';
 
 /// main call_log plugin class
 class CallLog {
-  static const Iterable<CallLogEntry> _EMPTY_RESULT =
-      Iterable<CallLogEntry>.empty();
+  static const Iterable<CallLogEntry> _EMPTY_RESULT = Iterable<CallLogEntry>.empty();
   static const MethodChannel _channel = MethodChannel('sk.fourq.call_log');
+
+  /// 用于监听新通话记录事件的 EventChannel
+  static const EventChannel _newCallLogsChannel = EventChannel('sk.fourq.call_log/new_call_logs');
 
   /// Get all call history log entries. Permissions are handled automatically
   static Future<Iterable<CallLogEntry>> get() async {
-    final Iterable<dynamic>? result =
-        await _channel.invokeMethod('get', null);
-    return result?.map((dynamic m) => CallLogEntry.fromMap(m)) ??
-        _EMPTY_RESULT;
+    final Iterable<dynamic>? result = await _channel.invokeMethod('get', null);
+    return result?.map((dynamic m) => CallLogEntry.fromMap(m)) ?? _EMPTY_RESULT;
   }
 
   /// Query call history log entries
@@ -63,8 +63,7 @@ class CallLog {
       'durationTo': durationTo?.toString(),
       'name': name,
       'number': number,
-      'type':
-          type?.index == null ? null : (type!.index + 1).toString(),
+      'type': type?.index == null ? null : (type!.index + 1).toString(),
       'cachedNumberType': cachedNumberType,
       'cachedNumberLabel': cachedNumberLabel,
       'cachedMatchedNumber': cachedMatchedNumber,
@@ -78,7 +77,7 @@ class CallLog {
 
   /// 监听新通话记录事件
   static Stream<CallLogEntry> listenNewCallLogs() {
-    return EventChannel('sk.fourq.call_log/new_call_logs')
+    return _newCallLogsChannel
         .receiveBroadcastStream()
         .map((dynamic event) => CallLogEntry.fromMap(event));
   }
