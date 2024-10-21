@@ -27,6 +27,9 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 import io.flutter.plugin.common.BinaryMessenger;
+import io.flutter.plugin.common.EventChannel;
+import io.flutter.plugin.common.EventChannel.EventSink;
+import io.flutter.plugin.common.EventChannel.StreamHandler;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
@@ -40,7 +43,7 @@ import java.util.HashMap;
 import java.util.List;
 
 @TargetApi(Build.VERSION_CODES.M)
-public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHandler, PluginRegistry.RequestPermissionsResultListener {
+public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHandler, PluginRegistry.RequestPermissionsResultListener, StreamHandler {
 
     private static final String TAG = "flutter/CALL_LOG";
     private static final String ALREADY_RUNNING = "ALREADY_RUNNING";
@@ -71,18 +74,23 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
     private ActivityPluginBinding activityPluginBinding;
     private Activity activity;
     private Context ctx;
-    private MethodChannel channel; // 用于与 Flutter 通信的 MethodChannel
+    private EventChannel eventChannel; // 使用 EventChannel
+    private EventSink eventSink; // 用于发送事件的 EventSink
     private long lastSyncTimestamp = 0; // 上次同步时间戳
 
     private void init(BinaryMessenger binaryMessenger, Context applicationContext) {
         Log.d(TAG, "init. Messanger:" + binaryMessenger + " Context:" + applicationContext);
-        channel = new MethodChannel(binaryMessenger, "sk.fourq.call_log");
+        final MethodChannel channel = new MethodChannel(binaryMessenger, "sk.fourq.call_log");
         channel.setMethodCallHandler(this);
         ctx = applicationContext;
 
         // 获取上次同步时间戳
         SharedPreferences prefs = ctx.getSharedPreferences("call_log_sync", Context.MODE_PRIVATE);
         lastSyncTimestamp = prefs.getLong("last_sync_timestamp", 0);
+
+        // 初始化 EventChannel
+        eventChannel = new EventChannel(binaryMessenger, "sk.fourq.call_log/new_call_logs");
+        eventChannel.setStreamHandler(this);
     }
 
     @Override
@@ -129,14 +137,15 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
     }
 
     @Override
-    public void onMethodCall(MethodCall c, Result r) {
+    public void onMethodCall(MethodCall call, Result result) {
         Log.d(TAG, "onMethodCall");
         if (request != null) {
-            r.error(ALREADY_RUNNING, "Method call was cancelled. One method call is already running", null);
+            result.error(ALREADY_RUNNING, "Method call was cancelled. One method call is already running", null);
+            return;
         }
 
-        request = c;
-        result = r;
+        request = call;
+        this.result = result;
 
         String[] perm = {Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_PHONE_STATE};
         if (hasPermissions(perm)) {
@@ -145,7 +154,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
             if (activity != null) {
                 ActivityCompat.requestPermissions(activity, perm, 0);
             } else {
-                r.error("MISSING_PERMISSIONS", "Permission READ_CALL_LOG or READ_PHONE_STATE is required for plugin. Hovewer, plugin is unable to request permission because of background execution.", null);
+                result.error("MISSING_PERMISSIONS", "Permission READ_CALL_LOG or READ_PHONE_STATE is required for plugin. Hovewer, plugin is unable to request permission because of background execution.", null);
             }
         }
     }
@@ -221,7 +230,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
     @SuppressLint({"Range", "HardwareIds"})
     private void queryLogs(String query) {
         SubscriptionManager subscriptionManager = ContextCompat.getSystemService(ctx, SubscriptionManager.class);
-        TelephonyManager telephonyManager = ContextCompat.getSystemService(ctx, TelephonyManager.class); // Added for carrierName
+        TelephonyManager telephonyManager = ContextCompat.getSystemService(ctx, TelephonyManager.class);
         List<SubscriptionInfo> subscriptions = null;
         if (subscriptionManager != null) {
             subscriptions = subscriptionManager.getActiveSubscriptionInfoList();
@@ -258,7 +267,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
 
                 map.put("simDisplayName", simDisplayName);
                 map.put("simSlotIndex", String.valueOf(adjustedSimSlotIndex)); // 使用调整后的索引
-                map.put("phoneAccountId", accountId);
+                map.put("phoneAccountId", accountId); 
                 entries.add(map);
             }
             result.success(entries);
@@ -269,7 +278,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
         }
     }
 
-    // 改进后的 getSimDisplayName 方法，参考你提供的代码片段
+    // 改进后的 getSimDisplayName 方法
     private String getSimDisplayName(List<SubscriptionInfo> subscriptions, String accountId, TelephonyManager telephonyManager) {
         if (subscriptions != null) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -279,7 +288,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
                     }
                 }
             } else {
-                // For older APIs, use TelephonyManager or other methods
+                             // For older APIs, use TelephonyManager or other methods
                 // to get SIM display name based on accountId
                 // ... (你可以根据需要添加针对旧版本 API 的逻辑)
                 return telephonyManager.getSimOperatorName(); // Example for older APIs
@@ -323,8 +332,8 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
             List<HashMap<String, Object>> newEntries = queryNewCallLogs(lastSyncTimestamp);
 
             // 将新增的通话记录发送给 Flutter 端
-            if (!newEntries.isEmpty()) {
-                channel.invokeMethod("newCallLogs", newEntries);
+            if (eventSink != null && !newEntries.isEmpty()) {
+                eventSink.success(newEntries); // 通过 EventSink 发送事件
             }
 
             // 更新上次同步时间戳
@@ -389,6 +398,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
         return newEntries;
     }
 
+
     /**
      * Helper method to check if permissions were granted
      *
@@ -431,5 +441,16 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
     private void cleanup() {
         request = null;
         result = null;
+    }
+
+    // StreamHandler 的方法
+    @Override
+    public void onListen(Object arguments, EventSink events) {
+        eventSink = events; // 保存 EventSink，用于发送事件
+    }
+
+    @Override
+    public void onCancel(Object arguments) {
+        eventSink = null; // 取消监听时，清空 EventSink
     }
 }
