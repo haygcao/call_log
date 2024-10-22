@@ -79,7 +79,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
     private long lastSyncTimestamp = 0; // 上次同步时间戳
 
     private void init(BinaryMessenger binaryMessenger, Context applicationContext) {
-        Log.d(TAG, "init. Messanger:" + binaryMessenger + " Context:" + applicationContext);
+      //  Log.d(TAG, "init. Messanger:" + binaryMessenger + " Context:" + applicationContext);
         final MethodChannel channel = new MethodChannel(binaryMessenger, "sk.fourq.call_log");
         channel.setMethodCallHandler(this);
         ctx = applicationContext;
@@ -105,7 +105,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
     @Override
     public void onDetachedFromEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
         //NO-OP
-        Log.d(TAG, "onDetachedFromEngine");
+       // Log.d(TAG, "onDetachedFromEngine");
     }
 
     @Override
@@ -118,12 +118,12 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
 
     @Override
     public void onDetachedFromActivityForConfigChanges() {
-        Log.d(TAG, "onDetachedFromActivityForConfigChanges");
+       // Log.d(TAG, "onDetachedFromActivityForConfigChanges");
     }
 
     @Override
     public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding activityPluginBinding) {
-        Log.d(TAG, "onReattachedToActivityForConfigChanges");
+      //  Log.d(TAG, "onReattachedToActivityForConfigChanges");
     }
 
     @Override
@@ -392,7 +392,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
                 newEntries.add(map);
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error querying call logs: " + e.getMessage());
+          //  Log.e(TAG, "Error querying call logs: " + e.getMessage());
         }
 
         return newEntries;
