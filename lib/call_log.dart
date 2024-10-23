@@ -141,6 +141,23 @@ class CallLogEntry {
     simSlotIndex = m['simSlotIndex']; // 从 map 中获取 simSlotIndex
   }
 
+  // 将 CallLogEntry 对象转换为 Map
+  /// Converts this [CallLogEntry] object to a [Map<String, dynamic>].
+  CallLogEntry.toMap(Map<String, dynamic> m) {
+    name = m['name'];
+    number = m['number'];
+    formattedNumber = m['formattedNumber'];
+    callType = getCallType(m['callType']);
+    duration = m['duration'];
+    timestamp = m['timestamp'];
+    cachedNumberType = m['cachedNumberType'];
+    cachedNumberLabel = m['cachedNumberLabel'];
+    cachedMatchedNumber = m['cachedMatchedNumber'];
+    simDisplayName = m['simDisplayName'];
+    phoneAccountId = m['phoneAccountId'];
+    simSlotIndex = m['simSlotIndex'];
+  }
+  
   /// contact name
   String? name;
 

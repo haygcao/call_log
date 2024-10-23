@@ -53,7 +53,7 @@ class _MyAppState extends State<MyApp> {
   List<CallLogEntry> _recentCallLogEntries = <CallLogEntry>[]; // 存储最近通话记录
   List<CallLogEntry> _allCallLogEntries = <CallLogEntry>[]; // 存储所有通话记录
   List<flutter.SimInfo> _simInfoList = <flutter.SimInfo>[];
-
+ List<CallLogEntry> _callLogEntries = <CallLogEntry>[]; // 将 Iterable 改为 List
   // 用于监听新通话记录的订阅
   StreamSubscription<dynamic>? _newCallLogsSubscription;
 
@@ -85,6 +85,17 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
+  // 首次加载通话记录
+  Future<void> _loadInitialCallLogs() async {
+    final lastSyncTimestamp = await _getLastSyncTimestamp();
+    final initialCallLogs = await CallLog.query(dateTimeFrom: DateTime.fromMillisecondsSinceEpoch(lastSyncTimestamp));
+    setState(() {
+      _callLogEntries = initialCallLogs.toList(); // 将 Iterable 转换为 List
+    });
+
+    // 首次加载后，将上次同步时间戳更新为当前时间
+    await _saveLastSyncTimestamp(DateTime.now().millisecondsSinceEpoch);
+  }
   // 获取上次同步时间戳
   Future<int> _getLastSyncTimestamp() async {
     final prefs = await SharedPreferences.getInstance();
