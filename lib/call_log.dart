@@ -131,8 +131,13 @@ class CallLogEntry {
     number = m['number'];
     formattedNumber = m['formattedNumber'];
     callType = getCallType(m['callType']);
+    /*
     duration = m['duration'];
     timestamp = m['timestamp'];
+*/
+  duration = int.tryParse(m['duration'] ?? '');
+  timestamp = int.tryParse(m['timestamp'] ?? '');
+
     cachedNumberType = m['cachedNumberType'];
     cachedNumberLabel = m['cachedNumberLabel'];
     cachedMatchedNumber = m['cachedMatchedNumber'];
@@ -142,7 +147,6 @@ class CallLogEntry {
   }
 
   // 将 CallLogEntry 对象转换为 Map
-
   /// Converts the CallLogEntry instance to a map representation.
   /// 
   /// Returns a [Map] containing the CallLogEntry data in a format suitable for JSON serialization.
@@ -152,8 +156,13 @@ class CallLogEntry {
       'number': number,
       'formattedNumber': formattedNumber,
       'callType': callType.toString(),
+      /*
       'duration': duration,
       'timestamp': timestamp,
+*/
+    'duration': duration?.toString(),
+    'timestamp': timestamp?.toString(),
+
       'cachedNumberType': cachedNumberType,
       'cachedNumberLabel': cachedNumberLabel,
       'cachedMatchedNumber': cachedMatchedNumber,
@@ -162,7 +171,6 @@ class CallLogEntry {
       'simSlotIndex': simSlotIndex,
     };
   }
-
 
   /// contact name
   String? name;
