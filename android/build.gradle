@@ -31,4 +31,5 @@ dependencies {
     implementation 'androidx.annotation:annotation:1.9.0'
     implementation 'androidx.core:core:1.13.1'
     implementation 'org.apache.commons:commons-lang3:3.15.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
 }

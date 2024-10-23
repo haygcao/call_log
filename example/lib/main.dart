@@ -3,8 +3,7 @@ import 'dart:async';
 import 'package:call_log/call_log.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // 添加 SharedPreferences
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sim_card_info/sim_card_info.dart';
 import 'package:sim_card_info/sim_info.dart' as flutter;
 import 'package:workmanager/workmanager.dart';
@@ -51,7 +50,8 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
- List<CallLogEntry> _callLogEntries = <CallLogEntry>[]; // 将 Iterable 改为 List
+  List<CallLogEntry> _recentCallLogEntries = <CallLogEntry>[]; // 存储最近通话记录
+  List<CallLogEntry> _allCallLogEntries = <CallLogEntry>[]; // 存储所有通话记录
   List<flutter.SimInfo> _simInfoList = <flutter.SimInfo>[];
 
   // 用于监听新通话记录的订阅
@@ -64,31 +64,25 @@ class _MyAppState extends State<MyApp> {
 
     // 监听新通话记录
     _listenForNewCallLogs();
-
-    // 首次加载通话记录
-    _loadInitialCallLogs();
   }
 
   // 监听新通话记录
   void _listenForNewCallLogs() {
-    _newCallLogsSubscription = CallLog.listenNewCallLogs().listen((CallLogEntry newCallLog) {
-      // 处理新的通话记录，例如添加到 _callLogEntries 列表中，并更新 UI
+    _newCallLogsSubscription =
+        CallLog.listenNewCallLogs().listen((CallLogEntry newCallLog) {
       setState(() {
-        _callLogEntries.add(newCallLog);
+        _recentCallLogEntries.add(newCallLog); // 将新通话记录添加到最近通话记录列表
+        print(newCallLog.toString());
       });
     });
   }
 
-  // 首次加载通话记录
-  Future<void> _loadInitialCallLogs() async {
-    final lastSyncTimestamp = await _getLastSyncTimestamp();
-    final initialCallLogs = await CallLog.query(dateTimeFrom: DateTime.fromMillisecondsSinceEpoch(lastSyncTimestamp));
+  // 加载所有通话记录
+  Future<void> _loadAllCallLogs() async {
+    final allCallLogs = await CallLog.get();
     setState(() {
-      _callLogEntries = initialCallLogs.toList(); // 将 Iterable 转换为 List
+      _allCallLogEntries = allCallLogs.toList();
     });
-
-    // 首次加载后，将上次同步时间戳更新为当前时间
-    await _saveLastSyncTimestamp(DateTime.now().millisecondsSinceEpoch);
   }
 
   // 获取上次同步时间戳
@@ -103,7 +97,6 @@ class _MyAppState extends State<MyApp> {
     await prefs.setInt('last_sync_timestamp', timestamp);
   }
 
-
   Future<void> _getSimInfo() async {
     final SimCardInfo simCardInfoPlugin = SimCardInfo();
     final List<flutter.SimInfo> simInfoList =
@@ -116,7 +109,6 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     const TextStyle mono = TextStyle(fontFamily: 'monospace');
-    final List<Widget> children = <Widget>[];
 
     // 显示所有 SIM 卡信息
     final List<Widget> simInfoWidgets = _simInfoList
@@ -125,74 +117,81 @@ class _MyAppState extends State<MyApp> {
             style: mono))
         .toList();
 
-    children.add(Column(
-      children: simInfoWidgets,
-      crossAxisAlignment: CrossAxisAlignment.start,
-    ));
-
-    // 显示通话记录和对应的 SIM 卡信息
-    for (CallLogEntry entry in _callLogEntries) {
-      children.add(
-        Column(
-          children: <Widget>[
-            const Divider(),
-            Text('NUMBER     : ${entry.number}', style: mono),
-            Text('SIM NAME   : ${entry.simDisplayName}', style: mono),
-            Text('Phoneaccount ID   : ${entry.phoneAccountId}', style: mono),
-            Text('slot ID   : ${entry.simSlotIndex}', style: mono),
-            // 其他信息...
-          ],
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.start,
-        ),
-      );
-    }
-
     return MaterialApp(
       home: Scaffold(
         appBar: AppBar(title: const Text('call_log example')),
         body: SingleChildScrollView(
           child: Column(
             children: <Widget>[
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      // 请求权限
-                      PermissionStatus status =
-                          await Permission.phone.request();
+              // SIM 卡信息部分
+              Column(
+                children: simInfoWidgets,
+                crossAxisAlignment: CrossAxisAlignment.start,
+              ),
 
-                      if (status.isGranted) {
-                        // 权限已授予，继续获取通话记录
-                        await _loadInitialCallLogs();
-                      } else {
-                        // 权限被拒绝，处理错误
-                        // 例如，显示一个对话框提示用户授予权限
-                      }
-                    },
-                    child: const Text('Get all'),
-                  ),
+              // 最新通话记录部分
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Column(
+                  children: _recentCallLogEntries
+                      .map(
+                        (CallLogEntry entry) => Column(
+                          children: <Widget>[
+                            const Divider(),
+                            Text('NUMBER     : ${entry.number}', style: mono),
+                            Text('SIM NAME   : ${entry.simDisplayName}',
+                                style: mono),
+                            Text('Phoneaccount ID   : ${entry.phoneAccountId}',
+                                style: mono),
+                            Text('slot ID   : ${entry.simSlotIndex}',
+                                style: mono),
+                            // 其他信息...
+                          ],
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.start,
+                        ),
+                      )
+                      .toList(),
                 ),
               ),
+
+              // "Get all in background" 按钮
               Center(
                 child: Padding(
                   padding: const EdgeInsets.all(8.0),
                   child: ElevatedButton(
                     onPressed: () {
-                      Workmanager().registerOneOffTask(
-                        DateTime.now().millisecondsSinceEpoch.toString(),
-                        'simpleTask',
-                        existingWorkPolicy: ExistingWorkPolicy.replace,
-                      );
+                      _loadAllCallLogs(); // 加载所有通话记录
                     },
                     child: const Text('Get all in background'),
                   ),
                 ),
               ),
+
+              // 所有通话记录部分
               Padding(
                 padding: const EdgeInsets.all(8.0),
-                child: Column(children: children),
+                child: Column(
+                  children: _allCallLogEntries
+                      .map(
+                        (CallLogEntry entry) => Column(
+                          children: <Widget>[
+                            const Divider(),
+                            Text('NUMBER     : ${entry.number}', style: mono),
+                            Text('SIM NAME   : ${entry.simDisplayName}',
+                                style: mono),
+                            Text('Phoneaccount ID   : ${entry.phoneAccountId}',
+                                style: mono),
+                            Text('slot ID   : ${entry.simSlotIndex}',
+                                style: mono),
+                            // 其他信息...
+                          ],
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.start,
+                        ),
+                      )
+                      .toList(),
+                ),
               ),
             ],
           ),

@@ -7,9 +7,12 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.database.ContentObserver;
 import android.database.Cursor;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
+import android.os.Looper;
 import android.provider.CallLog;
 import android.telecom.PhoneAccount;
 import android.telecom.PhoneAccountHandle;
@@ -23,6 +26,16 @@ import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import org.apache.commons.lang3.StringUtils;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
@@ -35,12 +48,6 @@ import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
 import io.flutter.plugin.common.PluginRegistry;
-
-import org.apache.commons.lang3.StringUtils;
-
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
 
 @TargetApi(Build.VERSION_CODES.M)
 public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHandler, PluginRegistry.RequestPermissionsResultListener, StreamHandler {
@@ -74,21 +81,20 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
     private ActivityPluginBinding activityPluginBinding;
     private Activity activity;
     private Context ctx;
-    private EventChannel eventChannel; // 使用 EventChannel
-    private EventSink eventSink; // 用于发送事件的 EventSink
-    private long lastSyncTimestamp = 0; // 上次同步时间戳
+    private EventChannel eventChannel;
+    private EventSink eventSink;
+    private long lastSyncTimestamp = 0;
+    private CallLogObserver callLogObserver;
+    private ExecutorService executorService = Executors.newFixedThreadPool(4);
 
     private void init(BinaryMessenger binaryMessenger, Context applicationContext) {
-      //  Log.d(TAG, "init. Messanger:" + binaryMessenger + " Context:" + applicationContext);
         final MethodChannel channel = new MethodChannel(binaryMessenger, "sk.fourq.call_log");
         channel.setMethodCallHandler(this);
         ctx = applicationContext;
 
-        // 获取上次同步时间戳
         SharedPreferences prefs = ctx.getSharedPreferences("call_log_sync", Context.MODE_PRIVATE);
         lastSyncTimestamp = prefs.getLong("last_sync_timestamp", 0);
 
-        // 初始化 EventChannel
         eventChannel = new EventChannel(binaryMessenger, "sk.fourq.call_log/new_call_logs");
         eventChannel.setStreamHandler(this);
     }
@@ -98,14 +104,20 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
         Log.d(TAG, "onAttachedToEngine");
         init(flutterPluginBinding.getBinaryMessenger(), flutterPluginBinding.getApplicationContext());
 
-        // 注册 ContentObserver 监听通话记录的变化
-        ctx.getContentResolver().registerContentObserver(CallLog.Calls.CONTENT_URI, true, new CallLogObserver(new Handler(), ctx));
+        callLogObserver = new CallLogObserver(new Handler(Looper.getMainLooper()), ctx);
+        ctx.getContentResolver().registerContentObserver(CallLog.Calls.CONTENT_URI, true, callLogObserver);
     }
 
     @Override
-    public void onDetachedFromEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
-        //NO-OP
-       // Log.d(TAG, "onDetachedFromEngine");
+    public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
+        if (callLogObserver != null) {
+            ctx.getContentResolver().unregisterContentObserver(callLogObserver);
+        }
+        if (eventChannel != null) {
+            eventChannel.setStreamHandler(null);
+        }
+        cleanup();
+        executorService.shutdown();
     }
 
     @Override
@@ -118,12 +130,12 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
 
     @Override
     public void onDetachedFromActivityForConfigChanges() {
-       // Log.d(TAG, "onDetachedFromActivityForConfigChanges");
+        // No-op
     }
 
     @Override
     public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding activityPluginBinding) {
-      //  Log.d(TAG, "onReattachedToActivityForConfigChanges");
+        // No-op
     }
 
     @Override
@@ -137,8 +149,14 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
     }
 
     @Override
-    public void onMethodCall(MethodCall call, Result result) {
-        Log.d(TAG, "onMethodCall");
+    public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
+      //  Log.d(TAG, "onMethodCall: " + call.method);
+
+        // 使用异步任务处理方法调用
+        executorService.submit(() -> handleMethodCall(call, result));
+    }
+
+    private void handleMethodCall(MethodCall call, Result result) {
         if (request != null) {
             result.error(ALREADY_RUNNING, "Method call was cancelled. One method call is already running", null);
             return;
@@ -149,7 +167,57 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
 
         String[] perm = {Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_PHONE_STATE};
         if (hasPermissions(perm)) {
-            handleMethodCall();
+            switch (request.method) {
+                case METHOD_GET:
+                    Future<List<HashMap<String, Object>>> getFuture = executorService.submit(() -> queryLogs(null));
+                    try {
+                        List<HashMap<String, Object>> entries = getFuture.get();
+                        result.success(entries);
+                    } catch (InterruptedException | ExecutionException e) {
+                        result.error(INTERNAL_ERROR, e.getMessage(), null);
+                    }
+                    cleanup();
+                    break;
+                case METHOD_QUERY:
+                    Future<List<HashMap<String, Object>>> queryFuture = executorService.submit(() -> {
+                        String dateFrom = request.argument("dateFrom");
+                        String dateTo = request.argument("dateTo");
+                        String durationFrom = request.argument("durationFrom");
+                        String durationTo = request.argument("durationTo");
+                        String name = request.argument("name");
+                        String number = request.argument("number");
+                        String type = request.argument("type");
+                        String cachedMatchedNumber = request.argument("cachedMatchedNumber");
+                        String phoneAccountId = request.argument("phoneAccountId");
+
+                        List<String> predicates = new ArrayList<>();
+                        generatePredicate(predicates, CallLog.Calls.DATE, OPERATOR_GT, dateFrom);
+                        generatePredicate(predicates, CallLog.Calls.DATE, OPERATOR_LT, dateTo);
+                        generatePredicate(predicates, CallLog.Calls.DURATION, OPERATOR_GT, durationFrom);
+                        generatePredicate(predicates, CallLog.Calls.DURATION, OPERATOR_LT, durationTo);
+                        generatePredicate(predicates, CallLog.Calls.CACHED_NAME, OPERATOR_LIKE, name);
+                        generatePredicate(predicates, CallLog.Calls.TYPE, OPERATOR_EQUALS, type);
+                        if (!StringUtils.isEmpty(number)) {
+                            List<String> namePredicates = new ArrayList<>();
+                            generatePredicate(namePredicates, CallLog.Calls.NUMBER, OPERATOR_LIKE, number);
+                            generatePredicate(namePredicates, CallLog.Calls.CACHED_MATCHED_NUMBER, OPERATOR_LIKE, number);
+                            generatePredicate(namePredicates, CallLog.Calls.PHONE_ACCOUNT_ID, OPERATOR_LIKE, number);
+                            predicates.add("(" + StringUtils.join(namePredicates, " OR ") + ")");
+                        }
+                        return queryLogs(StringUtils.join(predicates, " AND "));
+                    });
+                    try {
+                        List<HashMap<String, Object>> entries = queryFuture.get();
+                        result.success(entries);
+                    } catch (InterruptedException | ExecutionException e) {
+                        result.error(INTERNAL_ERROR, e.getMessage(), null);
+                    }
+                    cleanup();
+                    break;
+                default:
+                    result.notImplemented();
+                    cleanup();
+            }
         } else {
             if (activity != null) {
                 ActivityCompat.requestPermissions(activity, perm, 0);
@@ -162,14 +230,13 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
     @Override
     public boolean onRequestPermissionsResult(int requestCode, String[] strings, int[] grantResults) {
         if (requestCode == 0) {
-            //CHECK IF ALL REQUESTED PERMISSIONS ARE GRANTED
             for (int grantResult : grantResults) {
                 if (grantResults[0] == PackageManager.PERMISSION_DENIED) {
                     return false;
                 }
             }
             if (request != null) {
-                handleMethodCall();
+                handleMethodCall(request, result);
             }
             return true;
         } else {
@@ -181,54 +248,13 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
         }
     }
 
-    /***
-     * Handler for flutter {@link MethodCall}
-     */
-    private void handleMethodCall() {
-        switch (request.method) {
-            case METHOD_GET:
-                queryLogs(null);
-                break;
-            case METHOD_QUERY:
-                String dateFrom = request.argument("dateFrom");
-                String dateTo = request.argument("dateTo");
-                String durationFrom = request.argument("durationFrom");
-                String durationTo = request.argument("durationTo");
-                String name = request.argument("name");
-                String number = request.argument("number");
-                String type = request.argument("type");
-                String cachedMatchedNumber = request.argument("cachedMatchedNumber");
-                String phoneAccountId = request.argument("phoneAccountId");
-
-                List<String> predicates = new ArrayList<>();
-                generatePredicate(predicates, CallLog.Calls.DATE, OPERATOR_GT, dateFrom);
-                generatePredicate(predicates, CallLog.Calls.DATE, OPERATOR_LT, dateTo);
-                generatePredicate(predicates, CallLog.Calls.DURATION, OPERATOR_GT, durationFrom);
-                generatePredicate(predicates, CallLog.Calls.DURATION, OPERATOR_LT, durationTo);
-                generatePredicate(predicates, CallLog.Calls.CACHED_NAME, OPERATOR_LIKE, name);
-                generatePredicate(predicates, CallLog.Calls.TYPE, OPERATOR_EQUALS, type);
-                if (!StringUtils.isEmpty(number)) {
-                    List<String> namePredicates = new ArrayList<>();
-                    generatePredicate(namePredicates, CallLog.Calls.NUMBER, OPERATOR_LIKE, number);
-                    generatePredicate(namePredicates, CallLog.Calls.CACHED_MATCHED_NUMBER, OPERATOR_LIKE, number);
-                    generatePredicate(namePredicates, CallLog.Calls.PHONE_ACCOUNT_ID, OPERATOR_LIKE, number);
-                    predicates.add("(" + StringUtils.join(namePredicates, " OR ") + ")");
-                }
-                queryLogs(StringUtils.join(predicates, " AND "));
-                break;
-            default:
-                result.notImplemented();
-                cleanup();
-        }
-    }
-
     /**
      * Main query method
      *
      * @param query String with sql search condition
      */
     @SuppressLint({"Range", "HardwareIds"})
-    private void queryLogs(String query) {
+    private List<HashMap<String, Object>> queryLogs(String query) {
         SubscriptionManager subscriptionManager = ContextCompat.getSystemService(ctx, SubscriptionManager.class);
         TelephonyManager telephonyManager = ContextCompat.getSystemService(ctx, TelephonyManager.class);
         List<SubscriptionInfo> subscriptions = null;
@@ -236,6 +262,7 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
             subscriptions = subscriptionManager.getActiveSubscriptionInfoList();
         }
 
+        List<HashMap<String, Object>> entries = new ArrayList<>();
         try (Cursor cursor = ctx.getContentResolver().query(
                 CallLog.Calls.CONTENT_URI,
                 CURSOR_PROJECTION,
@@ -243,39 +270,37 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
                 null,
                 CallLog.Calls.DATE + " DESC"
         )) {
-            List<HashMap<String, Object>> entries = new ArrayList<>();
-            while (cursor != null && cursor.moveToNext()) {
-                HashMap<String, Object> map = new HashMap<>();
-                map.put("formattedNumber", cursor.getString(0));
-                map.put("number", cursor.getString(1));
-                map.put("callType", cursor.getInt(2));
-                map.put("timestamp", cursor.getLong(3));
-                map.put("duration", cursor.getInt(4));
-                map.put("name", cursor.getString(5));
-                map.put("cachedNumberType", cursor.getInt(6));
-                map.put("cachedNumberLabel", cursor.getString(7));
-                map.put("cachedMatchedNumber", cursor.getString(8));
+            if (cursor != null) {
+                while (cursor.moveToNext()) {
+                    HashMap<String, Object> map = new HashMap<>();
+                    map.put("formattedNumber", cursor.getString(0));
+                    map.put("number", cursor.getString(1));
+                    map.put("callType", cursor.getInt(2));
+                    map.put("timestamp", cursor.getLong(3));
+                    map.put("duration", cursor.getInt(4));
+                    map.put("name", cursor.getString(5));
+                    map.put("cachedNumberType", cursor.getInt(6));
+                    map.put("cachedNumberLabel", cursor.getString(7));
+                    map.put("cachedMatchedNumber", cursor.getString(8));
 
-                String accountId = cursor.getString(9); // Assuming phoneAccountId is at index 9
+                    String accountId = cursor.getString(9);
 
-                // 获取 SIM 卡槽索引，并加 1
-                String simSlotIndex = getSimSlotIndexFromAccountId(ctx, accountId);
-                int adjustedSimSlotIndex = Integer.parseInt(simSlotIndex) + 1;
+                    String simSlotIndex = getSimSlotIndexFromAccountId(ctx, accountId);
+                    int adjustedSimSlotIndex = Integer.parseInt(simSlotIndex) + 1;
 
-                // 获取 SIM 卡 display name
-                String simDisplayName = getSimDisplayName(subscriptions, accountId, telephonyManager);
+                    String simDisplayName = getSimDisplayName(subscriptions, accountId, telephonyManager);
 
-                map.put("simDisplayName", simDisplayName);
-                map.put("simSlotIndex", String.valueOf(adjustedSimSlotIndex)); // 使用调整后的索引
-                map.put("phoneAccountId", accountId); 
-                entries.add(map);
+                    map.put("simDisplayName", simDisplayName);
+                    map.put("simSlotIndex", String.valueOf(adjustedSimSlotIndex));
+                    map.put("phoneAccountId", accountId);
+                    
+                    entries.add(map);
+                }
             }
-            result.success(entries);
-            cleanup();
         } catch (Exception e) {
-            result.error(INTERNAL_ERROR, e.getMessage(), null);
-            cleanup();
+            Log.e(TAG, "Error querying call logs: " + e.getMessage());
         }
+        return entries;
     }
 
     // 改进后的 getSimDisplayName 方法
@@ -288,36 +313,41 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
                     }
                 }
             } else {
-                             // For older APIs, use TelephonyManager or other methods
-                // to get SIM display name based on accountId
-                // ... (你可以根据需要添加针对旧版本 API 的逻辑)
-                return telephonyManager.getSimOperatorName(); // Example for older APIs
+                return telephonyManager.getSimOperatorName();
             }
         }
-        return "Unknown"; // 或其他默认值
+        return "Unknown";
     }
 
     // getSimSlotIndexFromAccountId 方法保持不变
     public static String getSimSlotIndexFromAccountId(Context context, String accountIdToFind) {
         TelecomManager telecomManager = (TelecomManager) context.getSystemService(Context.TELECOM_SERVICE);
-        for (int index = 0; index < telecomManager.getCallCapablePhoneAccounts().size(); index++) {
-            PhoneAccountHandle account = telecomManager.getCallCapablePhoneAccounts().get(index);
-            PhoneAccount phoneAccount = telecomManager.getPhoneAccount(account);
-            String accountId = phoneAccount.getAccountHandle().getId();
-            if (accountIdToFind.equals(accountId)) {
-                return String.valueOf(index);
+        if (telecomManager != null) {
+            for (int index = 0; index < telecomManager.getCallCapablePhoneAccounts().size(); index++) {
+                PhoneAccountHandle account = telecomManager.getCallCapablePhoneAccounts().get(index);
+                PhoneAccount phoneAccount = telecomManager.getPhoneAccount(account);
+                if (phoneAccount != null) {
+                    String accountId = phoneAccount.getAccountHandle().getId();
+                    if (accountIdToFind.equals(accountId)) {
+                        return String.valueOf(index);
+                    }
+                }
             }
         }
-        Integer parsedAccountId = Integer.parseInt(accountIdToFind);
-        if (parsedAccountId != null && parsedAccountId >= 0) {
-            return String.valueOf(parsedAccountId);
+        try {
+            Integer parsedAccountId = Integer.parseInt(accountIdToFind);
+            if (parsedAccountId != null && parsedAccountId >= 0) {
+                return String.valueOf(parsedAccountId);
+            }
+        } catch (NumberFormatException e) {
+            Log.e(TAG, "Error parsing accountId: " + e.getMessage());
         }
         return "-1";
     }
 
     // ContentObserver 监听通话记录的变化
     private class CallLogObserver extends ContentObserver {
-        private Context context;
+        private final Context context;
 
         public CallLogObserver(Handler handler, Context context) {
             super(handler);
@@ -328,22 +358,24 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
         public void onChange(boolean selfChange) {
             super.onChange(selfChange);
 
-            // 查询新增的通话记录
-            List<HashMap<String, Object>> newEntries = queryNewCallLogs(lastSyncTimestamp);
-
-            // 将新增的通话记录发送给 Flutter 端
-            if (eventSink != null && !newEntries.isEmpty()) {
-                eventSink.success(newEntries); // 通过 EventSink 发送事件
-            }
+            Future<List<HashMap<String, Object>>> future = executorService.submit(() -> queryNewCallLogs(lastSyncTimestamp));
+           try {
+                     // 查询新增的通话记录
+                List<HashMap<String, Object>> newEntries = future.get();
+                if (eventSink != null && !newEntries.isEmpty()) {
+                    eventSink.success(newEntries); // 通过 EventSink 发送事件
+                }
 
             // 更新上次同步时间戳
-            lastSyncTimestamp = System.currentTimeMillis();
-            SharedPreferences prefs = ctx.getSharedPreferences("call_log_sync", Context.MODE_PRIVATE);
-            prefs.edit().putLong("last_sync_timestamp", lastSyncTimestamp).apply();
+                lastSyncTimestamp = System.currentTimeMillis();
+                SharedPreferences prefs = ctx.getSharedPreferences("call_log_sync", Context.MODE_PRIVATE);
+                prefs.edit().putLong("last_sync_timestamp", lastSyncTimestamp).apply();
+            } catch (InterruptedException | ExecutionException e) {
+               //Log.e(TAG, "Error querying new call logs: " + e.getMessage());
+          }
         }
     }
 
-    // 查询新增的通话记录
     @SuppressLint({"Range", "HardwareIds"})
     private List<HashMap<String, Object>> queryNewCallLogs(long lastTimestamp) {
         List<HashMap<String, Object>> newEntries = new ArrayList<>();
@@ -365,39 +397,40 @@ public class CallLogPlugin implements FlutterPlugin, ActivityAware, MethodCallHa
                 selectionArgs,
                 CallLog.Calls.DATE + " ASC"
         )) {
-            while (cursor != null && cursor.moveToNext()) {
-                HashMap<String, Object> map = new HashMap<>();
-                map.put("formattedNumber", cursor.getString(0));
-                map.put("number", cursor.getString(1));
-                map.put("callType", cursor.getInt(2));
-                map.put("timestamp", cursor.getLong(3));
-                map.put("duration", cursor.getInt(4));
-                map.put("name", cursor.getString(5));
-                map.put("cachedNumberType", cursor.getInt(6));
-                map.put("cachedNumberLabel", cursor.getString(7));
-                map.put("cachedMatchedNumber", cursor.getString(8));
+            if (cursor != null) {
+                while (cursor.moveToNext()) {
+                    HashMap<String, Object> map = new HashMap<>();
+                    map.put("formattedNumber", cursor.getString(0));
+                    map.put("number", cursor.getString(1));
+                    map.put("callType", cursor.getInt(2));
+                    map.put("timestamp", cursor.getLong(3));
+                    map.put("duration", cursor.getInt(4));
+                    map.put("name", cursor.getString(5));
+                    map.put("cachedNumberType", cursor.getInt(6));
+                    map.put("cachedNumberLabel", cursor.getString(7));
+                    map.put("cachedMatchedNumber", cursor.getString(8));
 
-                String accountId = cursor.getString(9); // Assuming phoneAccountId is at index 9
+                    String accountId = cursor.getString(9);
 
                 // 获取 SIM 卡槽索引，并加 1
-                String simSlotIndex = getSimSlotIndexFromAccountId(ctx, accountId);
-                int adjustedSimSlotIndex = Integer.parseInt(simSlotIndex) + 1;
+                    String simSlotIndex = getSimSlotIndexFromAccountId(ctx, accountId);
+                    int adjustedSimSlotIndex = Integer.parseInt(simSlotIndex) + 1;
+
+                    String simDisplayName = getSimDisplayName(subscriptions, accountId, telephonyManager);
 
                 // 获取 SIM 卡 display name
-                String simDisplayName = getSimDisplayName(subscriptions, accountId, telephonyManager);
-
-                map.put("simDisplayName", simDisplayName);
-                map.put("simSlotIndex", String.valueOf(adjustedSimSlotIndex)); // 使用调整后的索引
-                map.put("phoneAccountId", accountId);
-                newEntries.add(map);
+                    map.put("simDisplayName", simDisplayName);
+                    map.put("simSlotIndex", String.valueOf(adjustedSimSlotIndex));
+                    map.put("phoneAccountId", accountId);
+                    newEntries.add(map);
+                }
             }
         } catch (Exception e) {
-          //  Log.e(TAG, "Error querying call logs: " + e.getMessage());
+            Log.e(TAG, "Error querying call logs: " + e.getMessage());
         }
 
         return newEntries;
     }
-
 
     /**
      * Helper method to check if permissions were granted

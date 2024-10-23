@@ -75,14 +75,24 @@ class CallLog {
         _EMPTY_RESULT;
   }
 
-  /// 监听新通话记录事件
-  static Stream<CallLogEntry> listenNewCallLogs() {
-    return _newCallLogsChannel
-        .receiveBroadcastStream()
-        .map((dynamic event) => CallLogEntry.fromMap(event));
-  }
+/// 监听新通话记录事件
+static Stream<CallLogEntry> listenNewCallLogs() {
+  return _newCallLogsChannel
+      .receiveBroadcastStream()
+      .expand((dynamic event) {
+        if (event is Map) { // 如果是单个 HashMap，直接转换为 CallLogEntry
+          return [CallLogEntry.fromMap(event)]; // 返回一个包含单个 CallLogEntry 的 List
+        } else if (event is List) { // 如果是 List<HashMap>，遍历 List 并转换
+          return event.map((e) => CallLogEntry.fromMap(e as Map<dynamic, dynamic>)); // 返回一个 Iterable<CallLogEntry>
+        } else {
+          // 如果是其他类型，则抛出异常或返回空列表
+          print('Error: Received unexpected data type from native code: ${event.runtimeType}');
+          return []; // 或 throw Exception('...');
+        }
+      });
 }
 
+}
 ///method for returning the callType
 CallType getCallType(int n) {
   if (n == 100) {
