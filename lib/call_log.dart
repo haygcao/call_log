@@ -156,13 +156,13 @@ class CallLogEntry {
       'number': number,
       'formattedNumber': formattedNumber,
       'callType': callType.toString(),
-      /*
+     
       'duration': duration,
       'timestamp': timestamp,
-*/
+ /*
     'duration': duration?.toString(),
     'timestamp': timestamp?.toString(),
-
+*/ 
       'cachedNumberType': cachedNumberType,
       'cachedNumberLabel': cachedNumberLabel,
       'cachedMatchedNumber': cachedMatchedNumber,
