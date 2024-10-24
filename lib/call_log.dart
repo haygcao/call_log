@@ -4,11 +4,13 @@ import 'package:flutter/services.dart';
 
 /// main call_log plugin class
 class CallLog {
-  static const Iterable<CallLogEntry> _EMPTY_RESULT = Iterable<CallLogEntry>.empty();
+  static const Iterable<CallLogEntry> _EMPTY_RESULT =
+      Iterable<CallLogEntry>.empty();
   static const MethodChannel _channel = MethodChannel('sk.fourq.call_log');
 
   /// 用于监听新通话记录事件的 EventChannel
-  static const EventChannel _newCallLogsChannel = EventChannel('sk.fourq.call_log/new_call_logs');
+  static const EventChannel _newCallLogsChannel =
+      EventChannel('sk.fourq.call_log/new_call_logs');
 
   /// Get all call history log entries. Permissions are handled automatically
   static Future<Iterable<CallLogEntry>> get() async {
@@ -75,24 +77,26 @@ class CallLog {
         _EMPTY_RESULT;
   }
 
-/// 监听新通话记录事件
-static Stream<CallLogEntry> listenNewCallLogs() {
-  return _newCallLogsChannel
-      .receiveBroadcastStream()
-      .expand((dynamic event) {
-        if (event is Map) { // 如果是单个 HashMap，直接转换为 CallLogEntry
-          return [CallLogEntry.fromMap(event)]; // 返回一个包含单个 CallLogEntry 的 List
-        } else if (event is List) { // 如果是 List<HashMap>，遍历 List 并转换
-          return event.map((e) => CallLogEntry.fromMap(e as Map<dynamic, dynamic>)); // 返回一个 Iterable<CallLogEntry>
-        } else {
-          // 如果是其他类型，则抛出异常或返回空列表
-          print('Error: Received unexpected data type from native code: ${event.runtimeType}');
-          return []; // 或 throw Exception('...');
-        }
-      });
+  /// 监听新通话记录事件
+  static Stream<CallLogEntry> listenNewCallLogs() {
+    return _newCallLogsChannel.receiveBroadcastStream().expand((dynamic event) {
+      if (event is Map) {
+        // 如果是单个 HashMap，直接转换为 CallLogEntry
+        return [CallLogEntry.fromMap(event)]; // 返回一个包含单个 CallLogEntry 的 List
+      } else if (event is List) {
+        // 如果是 List<HashMap>，遍历 List 并转换
+        return event.map((e) => CallLogEntry.fromMap(
+            e as Map<dynamic, dynamic>)); // 返回一个 Iterable<CallLogEntry>
+      } else {
+        // 如果是其他类型，则抛出异常或返回空列表
+        print(
+            'Error: Received unexpected data type from native code: ${event.runtimeType}');
+        return []; // 或 throw Exception('...');
+      }
+    });
+  }
 }
 
-}
 ///method for returning the callType
 CallType getCallType(int n) {
   if (n == 100) {
@@ -131,12 +135,9 @@ class CallLogEntry {
     number = m['number'];
     formattedNumber = m['formattedNumber'];
     callType = getCallType(m['callType']);
-    /*
+
     duration = m['duration'];
     timestamp = m['timestamp'];
-*/
-  duration = int.tryParse(m['duration'] ?? '');
-  timestamp = int.tryParse(m['timestamp'] ?? '');
 
     cachedNumberType = m['cachedNumberType'];
     cachedNumberLabel = m['cachedNumberLabel'];
@@ -148,7 +149,7 @@ class CallLogEntry {
 
   // 将 CallLogEntry 对象转换为 Map
   /// Converts the CallLogEntry instance to a map representation.
-  /// 
+  ///
   /// Returns a [Map] containing the CallLogEntry data in a format suitable for JSON serialization.
   Map<String, dynamic> toJson() {
     return {
@@ -156,13 +157,8 @@ class CallLogEntry {
       'number': number,
       'formattedNumber': formattedNumber,
       'callType': callType.toString(),
-      /*
       'duration': duration,
       'timestamp': timestamp,
-*/
-    'duration': duration?.toString(),
-    'timestamp': timestamp?.toString(),
-
       'cachedNumberType': cachedNumberType,
       'cachedNumberLabel': cachedNumberLabel,
       'cachedMatchedNumber': cachedMatchedNumber,
